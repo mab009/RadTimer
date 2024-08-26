@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Multi-Lap Timer with Corrected Lap Calculations</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #121212;
+            color: #ffffff;
+        }
+        .container {
+            text-align: center;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(255,255,255,0.1);
+            max-width: 800px;
+            width: 100%;
+        }
+        #currentLapDisplay {
+            font-size: 3em;
+            margin-bottom: 10px;
+            transition: color 0.5s ease;
+        }
+        #totalTimeDisplay {
+            font-size: 1.2em;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        button {
+            font-size: 1em;
+            margin: 5px;
+            padding: 10px 20px;
+            cursor: pointer;
+            background-color: #3700B3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #6200EE;
+        }
+        #lapTimes, #statistics {
+            margin-top: 20px;
+            text-align: left;
+        }
+        .above-target {
+            color: #ff6b6b;
+        }
+        .below-target {
+            color: #4caf50;
+        }
+        input[type="number"] {
+            background-color: #2c2c2c;
+            color: white;
+            border: 1px solid #3700B3;
+            padding: 5px;
+            border-radius: 5px;
+            width: 60px;
+        }
+        .shortcuts {
+            margin-bottom: 20px;
+            font-size: 0.9em;
+            color: #aaa;
+            background-color: #2c2c2c;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .delete-lap {
+            background-color: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            padding: 2px 5px;
+            margin-left: 10px;
+            cursor: pointer;
+        }
+        .delete-lap:hover {
+            background-color: #cc0000;
+        }
+        @keyframes flash {
+            0%, 100% { color: #ffffff; }
+            50% { color: #ff6b6b; }
+        }
+        .flashing {
+            animation: flash 1s linear infinite;
+        }
+        #soundToggle, #beepCountWrapper {
+            margin-top: 10px;
+        }
+        .settings {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .settings > div {
+            flex: 1 1 200px;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="shortcuts">
+            <p>Shortcuts: Shift+Space (Lap) | Control+Space (Start/Stop)</p>
+        </div>
+        <div id="currentLapDisplay">00:00:00</div>
+        <div id="totalTimeDisplay">Total: 00:00:00</div>
+        <button id="startStop">Start</button>
+        <button id="lap">Lap</button>
+        <button id="reset">Reset</button>
+        <div class="settings">
+            <div>
+                <label for="targetLapTime">Target Lap Time (minutes):</label>
+                <input type="number" id="targetLapTime" value="10.0" min="0.1" step="0.1">
+            </div>
+            <div>
+                <label for="targetLaps">Target Number of Laps:</label>
+                <input type="number" id="targetLaps" value="10" min="1" step="1">
+            </div>
+            <div>
+                <label for="completedLaps">Completed Laps:</label>
+                <input type="number" id="completedLaps" value="0" min="0" step="1">
+            </div>
+            <div>
+                <label for="targetTotalTime">Target Total Time (minutes):</label>
+                <input type="number" id="targetTotalTime" value="100.0" min="0.1" step="0.1">
+            </div>
+            <div>
+                <label for="recentLapsAvg">Recent Laps for Avg:</label>
+                <input type="number" id="recentLapsAvg" value="3" min="1" step="1">
+            </div>
+            <div id="soundToggle">
+                <input type="checkbox" id="enableSound" checked>
+                <label for="enableSound">Enable Sound</label>
+            </div>
+            <div id="beepCountWrapper">
+                <label for="beepCount">Beep Count:</label>
+                <input type="number" id="beepCount" value="3" min="1" max="10" step="1">
+            </div>
+        </div>
+        <div id="statistics"></div>
+        <div id="lapTimes"></div>
+    </div>
+
+    <script>
+        let startTime;
+        let elapsedTime = 0;
+        let timerInterval;
+        let running = false;
+        let lapTimes = [];
+        let lastLapTime = 0;
+        let currentLapStartTime = 0;
+        let flashTimeout;
+        let targetReached = false;
+
+        const currentLapDisplay = document.getElementById('currentLapDisplay');
+        const totalTimeDisplay = document.getElementById('totalTimeDisplay');
+        const startStopButton = document.getElementById('startStop');
+        const lapButton = document.getElementById('lap');
+        const resetButton = document.getElementById('reset');
+        const lapTimesDiv = document.getElementById('lapTimes');
+        const statisticsDiv = document.getElementById('statistics');
+        const targetLapTimeInput = document.getElementById('targetLapTime');
+        const targetLapsInput = document.getElementById('targetLaps');
+        const completedLapsInput = document.getElementById('completedLaps');
+        const targetTotalTimeInput = document.getElementById('targetTotalTime');
+        const recentLapsAvgInput = document.getElementById('recentLapsAvg');
+        const enableSoundCheckbox = document.getElementById('enableSound');
+        const beepCountInput = document.getElementById('beepCount');
+
+        // Create audio context and beep sound
+        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        function beep(count) {
+            if (enableSoundCheckbox.checked) {
+                for (let i = 0; i < count; i++) {
+                    setTimeout(() => {
+                        let oscillator = audioContext.createOscillator();
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                        oscillator.connect(audioContext.destination);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                    }, i * 500);
+                }
+            }
+        }
+
+        function startStop() {
+            if (running) {
+                clearInterval(timerInterval);
+                elapsedTime += Date.now() - startTime;
+                startStopButton.textContent = 'Start';
+            } else {
+                startTime = Date.now();
+                if (lapTimes.length === 0) {
+                    currentLapStartTime = startTime;
+                }
+                timerInterval = setInterval(updateDisplay, 100);
+                startStopButton.textContent = 'Stop';
+            }
+            running = !running;
+        }
+
+        function updateDisplay() {
+            const currentTime = Date.now();
+            const totalElapsedTime = elapsedTime + (currentTime - startTime);
+            const currentLapTime = totalElapsedTime - lastLapTime;
+            
+            currentLapDisplay.textContent = formatTime(currentLapTime);
+            totalTimeDisplay.textContent = 'Total: ' + formatTime(totalElapsedTime);
+
+            checkTargetTime(currentLapTime);
+            updateStatistics(totalElapsedTime);
+        }
+
+        function checkTargetTime(currentLapTime) {
+            const targetTime = parseFloat(targetLapTimeInput.value) * 60 * 1000;
+            if (currentLapTime >= targetTime && !targetReached) {
+                targetReached = true;
+                startFlashing();
+                beep(parseInt(beepCountInput.value));
+                setTimeout(stopFlashing, 30000);
+            }
+        }
+
+        function startFlashing() {
+            currentLapDisplay.classList.add('flashing');
+        }
+
+        function stopFlashing() {
+            currentLapDisplay.classList.remove('flashing');
+        }
+
+        function formatTime(time) {
+            const date = new Date(time);
+            return date.toISOString().substr(11, 8);
+        }
+
+        function lap() {
+            if (running) {
+                const currentTime = Date.now();
+                const lapTime = currentTime - startTime + elapsedTime - lastLapTime;
+                lapTimes.unshift(lapTime);
+                lastLapTime = currentTime - startTime + elapsedTime;
+                currentLapStartTime = currentTime;
+                targetReached = false;
+                stopFlashing();
+                updateLapTimes();
+                updateStatistics(lastLapTime);
+                completedLapsInput.value = parseInt(completedLapsInput.value) + 1;
+            }
+        }
+
+        function updateLapTimes() {
+            const targetTime = parseFloat(targetLapTimeInput.value) * 60 * 1000;
+            lapTimesDiv.innerHTML = lapTimes.map((time, index) => {
+                const formattedTime = formatTime(time);
+                const className = time > targetTime ? 'above-target' : 'below-target';
+                return `<div class="${className}">
+                    Lap ${lapTimes.length - index}: ${formattedTime}
+                    <button class="delete-lap" onclick="deleteLap(${index})">X</button>
+                </div>`;
+            }).join('');
+        }
+
+        function deleteLap(index) {
+            lapTimes.splice(index, 1);
+            updateLapTimes();
+            updateStatistics(lastLapTime);
+            completedLapsInput.value = parseInt(completedLapsInput.value) - 1;
+        }
+
+        function updateStatistics(totalElapsedTime) {
+            const targetLapTime = parseFloat(targetLapTimeInput.value) * 60 * 1000;
+            const targetLaps = parseInt(targetLapsInput.value);
+            const completedLaps = parseInt(completedLapsInput.value);
+            const targetTotalTime = parseFloat(targetTotalTimeInput.value) * 60 * 1000;
+            const recentLapsCount = parseInt(recentLapsAvgInput.value);
+
+            let averageLapTime = 0;
+            let recentAverageLapTime = 0;
+
+            if (lapTimes.length > 0) {
+                averageLapTime = lapTimes.reduce((sum, time) => sum + time, 0) / lapTimes.length;
+                recentAverageLapTime = lapTimes.slice(0, recentLapsCount).reduce((sum, time) => sum + time, 0) / Math.min(recentLapsCount, lapTimes.length);
+            }
+
+            // Corrected calculations
+            const percentLapsDoneAtTargetTime = (targetLapTime / averageLapTime) * 100;
+            const lapsDoneAtTargetTime = targetTotalTime / averageLapTime;
+
+            const percentLapsDoneAtCurrentPace = (completedLaps / targetLaps) * 100;
+            const percentLapsDoneAtRecentPace = (completedLaps * recentAverageLapTime / targetTotalTime) * 100;
+
+            statisticsDiv.innerHTML = `
+                <p>Average Lap Time: ${formatTime(averageLapTime)}</p>
+                <p>Recent ${recentLapsCount} Laps Average: ${formatTime(recentAverageLapTime)}</p>
+                <p>Completed Laps: ${completedLaps} / ${targetLaps}</p>
+                <p>% Laps Done at Target Time: ${percentLapsDoneAtTargetTime.toFixed(2)}%</p>
+                <p>Laps Done at Target Time: ${lapsDoneAtTargetTime.toFixed(2)}</p>
+                <p>% Laps Done at Current Pace: ${percentLapsDoneAtCurrentPace.toFixed(2)}%</p>
+                <p>% Laps Done at Recent ${recentLapsCount} Laps Pace: ${percentLapsDoneAtRecentPace.toFixed(2)}%</p>
+            `;
+        }
+
+        function reset() {
+            clearInterval(timerInterval);
+            elapsedTime = 0;
+            running = false;
+            lapTimes = [];
+            lastLapTime = 0;
+            currentLapStartTime = 0;
+            targetReached = false;
+            stopFlashing();
+            currentLapDisplay.textContent = '00:00:00';
+            totalTimeDisplay.textContent = 'Total: 00:00:00';
+            startStopButton.textContent = 'Start';
+            lapTimesDiv.innerHTML = '';
+            statisticsDiv.innerHTML = '';
+            completedLapsInput.value = '0';
+        }
+
+        startStopButton.addEventListener('click', startStop);
+        lapButton.addEventListener('click', lap);
+        resetButton.addEventListener('click', reset);
+        [targetLapTimeInput, targetLapsInput, completedLapsInput, targetTotalTimeInput, recentLapsAvgInput].forEach(input => {
+            input.addEventListener('change', () => updateStatistics(elapsedTime));
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(event) {
+            if (event.shiftKey && event.code === 'Space' && !event.ctrlKey) {
+                event.preventDefault();
+                lap();
+            }
+            if (event.ctrlKey && event.code === 'Space' && !event.shiftKey) {
+                event.preventDefault();
+                startStop();
+            }
+        });
+
+        // Initial statistics update
+        updateStatistics(0);
+    </script>
+</body>
+</html>
