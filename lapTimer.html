@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Multi-Lap Timer with Corrected Lap Calculations</title>
+    <title>Radiologist Case Timer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -24,7 +24,7 @@
             max-width: 800px;
             width: 100%;
         }
-        #currentLapDisplay {
+        #currentCaseDisplay {
             font-size: 3em;
             margin-bottom: 10px;
             transition: color 0.5s ease;
@@ -47,7 +47,7 @@
         button:hover {
             background-color: #6200EE;
         }
-        #lapTimes, #statistics {
+        #caseTimes, #statistics {
             margin-top: 20px;
             text-align: left;
         }
@@ -57,13 +57,16 @@
         .below-target {
             color: #4caf50;
         }
-        input[type="number"] {
+        .warning {
+            color: #ffd700;
+        }
+        input[type="number"], input[type="time"], select {
             background-color: #2c2c2c;
             color: white;
             border: 1px solid #3700B3;
             padding: 5px;
             border-radius: 5px;
-            width: 60px;
+            width: 100px;
         }
         .shortcuts {
             margin-bottom: 20px;
@@ -73,7 +76,7 @@
             padding: 10px;
             border-radius: 5px;
         }
-        .delete-lap {
+        .delete-case {
             background-color: #ff4444;
             color: white;
             border: none;
@@ -82,7 +85,7 @@
             margin-left: 10px;
             cursor: pointer;
         }
-        .delete-lap:hover {
+        .delete-case:hover {
             background-color: #cc0000;
         }
         @keyframes flash {
@@ -91,9 +94,6 @@
         }
         .flashing {
             animation: flash 1s linear infinite;
-        }
-        #soundToggle, #beepCountWrapper {
-            margin-top: 10px;
         }
         .settings {
             display: flex;
@@ -111,246 +111,269 @@
 <body>
     <div class="container">
         <div class="shortcuts">
-            <p>Shortcuts: Shift+Space (Lap) | Control+Space (Start/Stop)</p>
+            <p>Shortcuts: Shift+Space (Complete Case) | Control+Space (Start/Stop)</p>
         </div>
-        <div id="currentLapDisplay">00:00:00</div>
+        <div id="currentCaseDisplay">00:00:00</div>
         <div id="totalTimeDisplay">Total: 00:00:00</div>
         <button id="startStop">Start</button>
-        <button id="lap">Lap</button>
+        <button id="completeCase">Complete Case</button>
         <button id="reset">Reset</button>
         <div class="settings">
             <div>
-                <label for="targetLapTime">Target Lap Time (minutes):</label>
-                <input type="number" id="targetLapTime" value="10.0" min="0.1" step="0.1">
+                <label for="timeInputType">Time Input Type:</label>
+                <select id="timeInputType">
+                    <option value="shiftEnd">Shift End Time</option>
+                    <option value="totalTime">Total Time</option>
+                </select>
+            </div>
+            <div id="shiftEndTimeWrapper">
+                <label for="shiftEndTime">Shift End Time:</label>
+                <input type="time" id="shiftEndTime" value="17:00">
+            </div>
+            <div id="totalTimeWrapper" style="display:none;">
+                <label for="totalTime">Total Time (minutes):</label>
+                <input type="number" id="totalTime" value="480" min="1" step="1">
             </div>
             <div>
-                <label for="targetLaps">Target Number of Laps:</label>
-                <input type="number" id="targetLaps" value="50" min="1" step="1">
+                <label for="targetCases">Target Number of Cases:</label>
+                <input type="number" id="targetCases" value="50" min="1" step="1">
             </div>
             <div>
-                <label for="completedLaps">Completed Laps:</label>
-                <input type="number" id="completedLaps" value="0" min="0" step="1">
+                <label for="completedCases">Completed Cases:</label>
+                <input type="number" id="completedCases" value="0" min="0" step="1">
             </div>
             <div>
-                <label for="targetTotalTime">Target Total Time (minutes):</label>
-                <input type="number" id="targetTotalTime" value="480.0" min="0.1" step="0.1">
-            </div>
-            <div>
-                <label for="recentLapsAvg">Recent Laps for Avg:</label>
-                <input type="number" id="recentLapsAvg" value="3" min="1" step="1">
-            </div>
-            <div id="soundToggle">
-                <input type="checkbox" id="enableSound" checked>
-                <label for="enableSound">Enable Sound</label>
-            </div>
-            <div id="beepCountWrapper">
-                <label for="beepCount">Beep Count:</label>
-                <input type="number" id="beepCount" value="3" min="1" max="10" step="1">
+                <label for="recentCasesAvg">Recent Cases for Avg:</label>
+                <input type="number" id="recentCasesAvg" value="3" min="1" step="1">
             </div>
         </div>
+        <div id="targetAverageTime"></div>
         <div id="statistics"></div>
-        <div id="lapTimes"></div>
+        <div id="caseTimes"></div>
     </div>
+</body>
+<script>
+    let startTime;
+    let elapsedTime = 0;
+    let timerInterval;
+    let running = false;
+    let caseTimes = [];
+    let lastCaseTime = 0;
+    let currentCaseStartTime = 0;
+    let flashTimeout;
+    let targetReached = false;
 
-    <script>
-        let startTime;
-        let elapsedTime = 0;
-        let timerInterval;
-        let running = false;
-        let lapTimes = [];
-        let lastLapTime = 0;
-        let currentLapStartTime = 0;
-        let flashTimeout;
-        let targetReached = false;
+    const currentCaseDisplay = document.getElementById('currentCaseDisplay');
+    const totalTimeDisplay = document.getElementById('totalTimeDisplay');
+    const startStopButton = document.getElementById('startStop');
+    const completeCaseButton = document.getElementById('completeCase');
+    const resetButton = document.getElementById('reset');
+    const caseTimesDiv = document.getElementById('caseTimes');
+    const statisticsDiv = document.getElementById('statistics');
+    const targetAverageTimeDiv = document.getElementById('targetAverageTime');
+    const timeInputTypeSelect = document.getElementById('timeInputType');
+    const shiftEndTimeWrapper = document.getElementById('shiftEndTimeWrapper');
+    const totalTimeWrapper = document.getElementById('totalTimeWrapper');
+    const shiftEndTimeInput = document.getElementById('shiftEndTime');
+    const totalTimeInput = document.getElementById('totalTime');
+    const targetCasesInput = document.getElementById('targetCases');
+    const completedCasesInput = document.getElementById('completedCases');
+    const recentCasesAvgInput = document.getElementById('recentCasesAvg');
 
-        const currentLapDisplay = document.getElementById('currentLapDisplay');
-        const totalTimeDisplay = document.getElementById('totalTimeDisplay');
-        const startStopButton = document.getElementById('startStop');
-        const lapButton = document.getElementById('lap');
-        const resetButton = document.getElementById('reset');
-        const lapTimesDiv = document.getElementById('lapTimes');
-        const statisticsDiv = document.getElementById('statistics');
-        const targetLapTimeInput = document.getElementById('targetLapTime');
-        const targetLapsInput = document.getElementById('targetLaps');
-        const completedLapsInput = document.getElementById('completedLaps');
-        const targetTotalTimeInput = document.getElementById('targetTotalTime');
-        const recentLapsAvgInput = document.getElementById('recentLapsAvg');
-        const enableSoundCheckbox = document.getElementById('enableSound');
-        const beepCountInput = document.getElementById('beepCount');
-
-        // Create audio context and beep sound
-        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        function beep(count) {
-            if (enableSoundCheckbox.checked) {
-                for (let i = 0; i < count; i++) {
-                    setTimeout(() => {
-                        let oscillator = audioContext.createOscillator();
-                        oscillator.type = 'sine';
-                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
-                        oscillator.connect(audioContext.destination);
-                        oscillator.start();
-                        oscillator.stop(audioContext.currentTime + 0.2);
-                    }, i * 500);
-                }
-            }
+    timeInputTypeSelect.addEventListener('change', function() {
+        if (this.value === 'shiftEnd') {
+            shiftEndTimeWrapper.style.display = 'block';
+            totalTimeWrapper.style.display = 'none';
+        } else {
+            shiftEndTimeWrapper.style.display = 'none';
+            totalTimeWrapper.style.display = 'block';
         }
+        updateTargetAverageTime();
+    });
 
-        function startStop() {
-            if (running) {
-                clearInterval(timerInterval);
-                elapsedTime += Date.now() - startTime;
-                startStopButton.textContent = 'Start';
-            } else {
-                startTime = Date.now();
-                if (lapTimes.length === 0) {
-                    currentLapStartTime = startTime;
-                }
-                timerInterval = setInterval(updateDisplay, 100);
-                startStopButton.textContent = 'Stop';
-            }
-            running = !running;
-        }
-
-        function updateDisplay() {
-            const currentTime = Date.now();
-            const totalElapsedTime = elapsedTime + (currentTime - startTime);
-            const currentLapTime = totalElapsedTime - lastLapTime;
-            
-            currentLapDisplay.textContent = formatTime(currentLapTime);
-            totalTimeDisplay.textContent = 'Total: ' + formatTime(totalElapsedTime);
-
-            checkTargetTime(currentLapTime);
-            updateStatistics(totalElapsedTime);
-        }
-
-        function checkTargetTime(currentLapTime) {
-            const targetTime = parseFloat(targetLapTimeInput.value) * 60 * 1000;
-            if (currentLapTime >= targetTime && !targetReached) {
-                targetReached = true;
-                startFlashing();
-                beep(parseInt(beepCountInput.value));
-                setTimeout(stopFlashing, 30000);
-            }
-        }
-
-        function startFlashing() {
-            currentLapDisplay.classList.add('flashing');
-        }
-
-        function stopFlashing() {
-            currentLapDisplay.classList.remove('flashing');
-        }
-
-        function formatTime(time) {
-            const date = new Date(time);
-            return date.toISOString().substr(11, 8);
-        }
-
-        function lap() {
-            if (running) {
-                const currentTime = Date.now();
-                const lapTime = currentTime - startTime + elapsedTime - lastLapTime;
-                lapTimes.unshift(lapTime);
-                lastLapTime = currentTime - startTime + elapsedTime;
-                currentLapStartTime = currentTime;
-                targetReached = false;
-                stopFlashing();
-                updateLapTimes();
-                updateStatistics(lastLapTime);
-                completedLapsInput.value = parseInt(completedLapsInput.value) + 1;
-            }
-        }
-
-        function updateLapTimes() {
-            const targetTime = parseFloat(targetLapTimeInput.value) * 60 * 1000;
-            lapTimesDiv.innerHTML = lapTimes.map((time, index) => {
-                const formattedTime = formatTime(time);
-                const className = time > targetTime ? 'above-target' : 'below-target';
-                return `<div class="${className}">
-                    Lap ${lapTimes.length - index}: ${formattedTime}
-                    <button class="delete-lap" onclick="deleteLap(${index})">X</button>
-                </div>`;
-            }).join('');
-        }
-
-        function deleteLap(index) {
-            lapTimes.splice(index, 1);
-            updateLapTimes();
-            updateStatistics(lastLapTime);
-            completedLapsInput.value = parseInt(completedLapsInput.value) - 1;
-        }
-
-        function updateStatistics(totalElapsedTime) {
-            const targetLapTime = parseFloat(targetLapTimeInput.value) * 60 * 1000;
-            const targetLaps = parseInt(targetLapsInput.value);
-            const completedLaps = parseInt(completedLapsInput.value);
-            const targetTotalTime = parseFloat(targetTotalTimeInput.value) * 60 * 1000;
-            const recentLapsCount = parseInt(recentLapsAvgInput.value);
-
-            let averageLapTime = 0;
-            let recentAverageLapTime = 0;
-
-            if (lapTimes.length > 0) {
-                averageLapTime = lapTimes.reduce((sum, time) => sum + time, 0) / lapTimes.length;
-                recentAverageLapTime = lapTimes.slice(0, recentLapsCount).reduce((sum, time) => sum + time, 0) / Math.min(recentLapsCount, lapTimes.length);
-            }
-
-            // Corrected calculations
-            const percentLapsDoneAtTargetTime = (targetLapTime / averageLapTime) * 100;
-            const lapsDoneAtTargetTime = targetTotalTime / averageLapTime;
-
-            const percentLapsDoneAtCurrentPace = (completedLaps / targetLaps) * 100;
-            const percentLapsDoneAtRecentPace = (completedLaps * recentAverageLapTime / targetTotalTime) * 100;
-
-            statisticsDiv.innerHTML = `
-                <p>Average Lap Time: ${formatTime(averageLapTime)}</p>
-                <p>Recent ${recentLapsCount} Laps Average: ${formatTime(recentAverageLapTime)}</p>
-                <p>Completed Laps: ${completedLaps} / ${targetLaps}</p>
-                <p>% Laps Done at Target Time: ${percentLapsDoneAtTargetTime.toFixed(2)}%</p>
-                <p>Laps Done at Target Time: ${lapsDoneAtTargetTime.toFixed(2)}</p>
-                <p>% Laps Done at Current Pace: ${percentLapsDoneAtCurrentPace.toFixed(2)}%</p>
-                <p>% Laps Done at Recent ${recentLapsCount} Laps Pace: ${percentLapsDoneAtRecentPace.toFixed(2)}%</p>
-            `;
-        }
-
-        function reset() {
+    function startStop() {
+        if (running) {
             clearInterval(timerInterval);
-            elapsedTime = 0;
-            running = false;
-            lapTimes = [];
-            lastLapTime = 0;
-            currentLapStartTime = 0;
+            elapsedTime += Date.now() - startTime;
+            startStopButton.textContent = 'Start';
+        } else {
+            startTime = Date.now();
+            if (caseTimes.length === 0) {
+                currentCaseStartTime = startTime;
+            }
+            timerInterval = setInterval(updateDisplay, 1000);
+            startStopButton.textContent = 'Stop';
+        }
+        running = !running;
+    }
+
+    function updateDisplay() {
+        const currentTime = Date.now();
+        const totalElapsedTime = elapsedTime + (currentTime - startTime);
+        const currentCaseTime = totalElapsedTime - lastCaseTime;
+        
+        currentCaseDisplay.textContent = formatTime(currentCaseTime);
+        totalTimeDisplay.textContent = 'Total: ' + formatTime(totalElapsedTime);
+
+        checkTargetTime(currentCaseTime);
+        updateStatistics(totalElapsedTime);
+    }
+
+    function checkTargetTime(currentCaseTime) {
+        const targetTime = calculateTargetTimePerCase();
+        if (currentCaseTime >= targetTime && !targetReached) {
+            targetReached = true;
+            startFlashing();
+            setTimeout(stopFlashing, 30000);
+        }
+    }
+
+    function startFlashing() {
+        currentCaseDisplay.classList.add('flashing');
+    }
+
+    function stopFlashing() {
+        currentCaseDisplay.classList.remove('flashing');
+    }
+
+    function formatTime(time) {
+        const date = new Date(time);
+        return date.toISOString().substr(11, 8);
+    }
+
+    function completeCase() {
+        if (running) {
+            const currentTime = Date.now();
+            const caseTime = currentTime - startTime + elapsedTime - lastCaseTime;
+            caseTimes.unshift(caseTime);
+            lastCaseTime = currentTime - startTime + elapsedTime;
+            currentCaseStartTime = currentTime;
             targetReached = false;
             stopFlashing();
-            currentLapDisplay.textContent = '00:00:00';
-            totalTimeDisplay.textContent = 'Total: 00:00:00';
-            startStopButton.textContent = 'Start';
-            lapTimesDiv.innerHTML = '';
-            statisticsDiv.innerHTML = '';
-            completedLapsInput.value = '0';
+            updateCaseTimes();
+            updateStatistics(lastCaseTime);
+            completedCasesInput.value = parseInt(completedCasesInput.value) + 1;
+        }
+    }
+
+    function updateCaseTimes() {
+        const targetTime = calculateTargetTimePerCase();
+        caseTimesDiv.innerHTML = caseTimes.map((time, index) => {
+            const formattedTime = formatTime(time);
+            const className = time > targetTime ? 'above-target' : 'below-target';
+            return `<div class="${className}">
+                Case ${caseTimes.length - index}: ${formattedTime}
+                <button class="delete-case" onclick="deleteCase(${index})">X</button>
+            </div>`;
+        }).join('');
+    }
+
+    function deleteCase(index) {
+        caseTimes.splice(index, 1);
+        updateCaseTimes();
+        updateStatistics(lastCaseTime);
+        completedCasesInput.value = parseInt(completedCasesInput.value) - 1;
+    }
+
+    function calculateTargetTimePerCase() {
+        let totalTime;
+        if (timeInputTypeSelect.value === 'shiftEnd') {
+            const now = new Date();
+            const shiftEnd = new Date(now.toDateString() + ' ' + shiftEndTimeInput.value);
+            totalTime = shiftEnd - now;
+        } else {
+            totalTime = parseInt(totalTimeInput.value) * 60 * 1000; // Convert minutes to milliseconds
+        }
+        return totalTime / parseInt(targetCasesInput.value);
+    }
+
+    function updateTargetAverageTime() {
+        const targetTime = calculateTargetTimePerCase();
+        targetAverageTimeDiv.textContent = `Target Average Time per Case: ${formatTime(targetTime)}`;
+    }
+
+    function updateStatistics(totalElapsedTime) {
+        const targetTime = calculateTargetTimePerCase();
+        const completedCases = parseInt(completedCasesInput.value);
+        const targetCases = parseInt(targetCasesInput.value);
+        const recentCasesCount = parseInt(recentCasesAvgInput.value);
+
+        let averageCaseTime = 0;
+        let recentAverageCaseTime = 0;
+
+        if (caseTimes.length > 0) {
+            averageCaseTime = caseTimes.reduce((sum, time) => sum + time, 0) / caseTimes.length;
+            recentAverageCaseTime = caseTimes.slice(0, recentCasesCount).reduce((sum, time) => sum + time, 0) / Math.min(recentCasesCount, caseTimes.length);
         }
 
-        startStopButton.addEventListener('click', startStop);
-        lapButton.addEventListener('click', lap);
-        resetButton.addEventListener('click', reset);
-        [targetLapTimeInput, targetLapsInput, completedLapsInput, targetTotalTimeInput, recentLapsAvgInput].forEach(input => {
-            input.addEventListener('change', () => updateStatistics(elapsedTime));
-        });
+        const totalTargetTime = targetTime * targetCases;
+        const timeRemaining = Math.max(0, totalTargetTime - totalElapsedTime);
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', function(event) {
-            if (event.shiftKey && event.code === 'Space' && !event.ctrlKey) {
-                event.preventDefault();
-                lap();
-            }
-            if (event.ctrlKey && event.code === 'Space' && !event.shiftKey) {
-                event.preventDefault();
-                startStop();
-            }
-        });
+        const percentAtTargetAll = ((completedCases + timeRemaining / averageCaseTime) / targetCases) * 100;
+        const percentAtTargetRecent = ((completedCases + timeRemaining / recentAverageCaseTime) / targetCases) * 100;
+        
+        const casesCompletedAtCurrentPace = completedCases +   timeRemaining / averageCaseTime;
+        const casesCompletedAtRecentPace = completedCases + timeRemaining / recentAverageCaseTime;
 
-        // Initial statistics update
-        updateStatistics(0);
-    </script>
-</body>
+        const getColorClass = (percent) => {
+            if (percent >= 84) return 'below-target';
+            if (percent >= 80) return 'warning';
+            return 'above-target';
+        };
+
+        statisticsDiv.innerHTML = `
+            <p>Completed Cases: ${completedCases} / ${targetCases} | 
+               Avg Time: ${formatTime(averageCaseTime)} (All), ${formatTime(recentAverageCaseTime)} (Recent ${recentCasesCount})</p>
+            <p class="${getColorClass(percentAtTargetAll)}">% at Target: ${percentAtTargetAll.toFixed(2)}% (All), 
+               ${percentAtTargetRecent.toFixed(2)}% (Recent ${recentCasesCount})</p>
+            <p>Cases Completed at Current Pace: ${casesCompletedAtCurrentPace.toFixed(2)} (All), ${casesCompletedAtRecentPace.toFixed(2)} (Recent ${recentCasesCount})</p>
+        `;
+
+        updateTargetAverageTime();
+    }
+
+    function reset() {
+        clearInterval(timerInterval);
+        elapsedTime = 0;
+        running = false;
+        caseTimes = [];
+        lastCaseTime = 0;
+        currentCaseStartTime = 0;
+        targetReached = false;
+        stopFlashing();
+        currentCaseDisplay.textContent = '00:00:00';
+        totalTimeDisplay.textContent = 'Total: 00:00:00';
+        startStopButton.textContent = 'Start';
+        caseTimesDiv.innerHTML = '';
+        statisticsDiv.innerHTML = '';
+        completedCasesInput.value = '0';
+        updateTargetAverageTime();
+    }
+
+    startStopButton.addEventListener('click', startStop);
+    completeCaseButton.addEventListener('click', completeCase);
+    resetButton.addEventListener('click', reset);
+    [shiftEndTimeInput, totalTimeInput, targetCasesInput, completedCasesInput, recentCasesAvgInput].forEach(input => {
+        input.addEventListener('change', () => {
+            updateStatistics(elapsedTime);
+            updateTargetAverageTime();
+        });
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(event) {
+        if (event.shiftKey && event.code === 'Space' && !event.ctrlKey) {
+            event.preventDefault();
+            completeCase();
+        }
+        if (event.ctrlKey && event.code === 'Space' && !event.shiftKey) {
+            event.preventDefault();
+            startStop();
+        }
+    });
+
+    // Initial statistics update
+    updateStatistics(0);
+    updateTargetAverageTime();
+</script>
 </html>
